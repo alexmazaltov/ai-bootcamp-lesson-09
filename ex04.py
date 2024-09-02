@@ -1,8 +1,11 @@
-from transformers import pipeline
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextStreamer
 import torch
+from tqdm import tqdm
 
-# pipe = pipeline("text-generation", model="TinyLlama/TinyLlama-1.1B-Chat-v1.0")
-pipe = pipeline("text-generation", model="TinyLlama/TinyLlama-1.1B-Chat-v1.0", torch_dtype=torch.bfloat16, device_map="auto")
+model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16, device_map="auto")
 
 input_text = [
     {
@@ -15,15 +18,29 @@ input_text = [
     },
 ]
 
-prompt = pipe.tokenizer.apply_chat_template(input_text, tokenize=False, add_generation_prompt=True)
-outputs = pipe(
-    prompt,
+prompt = tokenizer.apply_chat_template(input_text, tokenize=False, add_generation_prompt=True)
+
+# Create a tqdm progress bar
+progress_bar = tqdm(total=512, desc="Generating text", unit="tokens")
+
+def update_progress(_, __, generated_tokens):
+    progress_bar.update(len(generated_tokens[0]) - progress_bar.n)
+
+inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+outputs = model.generate(
+    **inputs,
     max_new_tokens=512,
-    do_sample=True, # to start using the sampling method for generating text
-    temperature=0.5, # to modulate the probabilities of sequential tokens
-    top_k=50, # to control the diversity of the generated text, to broaden the range of tokens that the model can pick from
-    top_p=0.9, # to exclude less probable tokens from generation
-    no_repeat_ngram_size=3, # to prevent the model from repeating the same n-gram multiple times
+    do_sample=True,
+    temperature=0.5,
+    top_k=50,
+    top_p=0.9,
+    no_repeat_ngram_size=3,
+    pad_token_id=tokenizer.eos_token_id,
+    streamer=streamer  # Pass the streamer instance here
 )
 
-print(outputs[0]["generated_text"])
+generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+progress_bar.close()
+
+print(generated_text)
